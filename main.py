@@ -129,9 +129,10 @@ end
         chunk_name = self.random_var(14)
         load_name = self.random_var(14)
 
+        # Use loadstring instead of load for Roblox executor compatibility
         return f"""local {chunk_name}="{escaped}"
 local {load_name}={decrypt_name}({chunk_name},{key})
-local _f=load({load_name})
+local _f=loadstring({load_name})
 if _f then _f() end
 """
 
@@ -148,6 +149,58 @@ local {self.random_var()}=pcall
 local {self.random_var()}=pairs
 """
         return f"{header}\n{anti}\n{body}"
+
+# ═══════════════════════════════════════
+# MODAL (for code input)
+# ═══════════════════════════════════════
+class ObfuscateModal(discord.ui.Modal, title="⭐ Star Obfuscator"):
+    code = discord.ui.TextInput(
+        label="Paste your Lua code here",
+        style=discord.TextStyle.paragraph,
+        placeholder="print('Hello World')",
+        required=True,
+        max_length=4000
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+
+        source = str(self.code)
+
+        try:
+            obfuscator = LuaObfuscator()
+            result = obfuscator.obfuscate(source)
+        except Exception as ex:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description=f"❌ Obfuscation failed: `{ex}`",
+                    color=0xff4444
+                )
+            )
+            return
+
+        db_increment(interaction.user.id, str(interaction.user))
+
+        out_file = discord.File(
+            fp=io.BytesIO(result.encode("utf-8")),
+            filename="obfuscated.lua"
+        )
+
+        embed = discord.Embed(
+            title="✅ Obfuscation Complete",
+            color=0x57f287
+        )
+        embed.add_field(name="👤 User", value=interaction.user.mention, inline=True)
+        embed.add_field(name="📄 Original", value=f"`{len(source):,}` chars", inline=True)
+        embed.add_field(name="🔒 Protected", value=f"`{len(result):,}` chars", inline=True)
+        embed.add_field(
+            name="🛡️ Protection Layers",
+            value="✓ XOR Encryption\n✓ Virtual Machine\n✓ String Encoding\n✓ Junk Code Injection\n✓ Anti-Tamper",
+            inline=False
+        )
+        embed.set_footer(text="⭐ Star Obfuscator • MoonSec-style Protection")
+
+        await interaction.followup.send(embed=embed, file=out_file)
 
 # ═══════════════════════════════════════
 # BOT SETUP
@@ -173,7 +226,7 @@ async def help_cmd(interaction: discord.Interaction):
     )
     embed.add_field(
         name="</obfuscate>",
-        value="Obfuscate Lua code\n> `code` - paste code directly\n> `file` - upload .lua file",
+        value="Obfuscate Lua code\n> Opens a popup — paste your code there\n> Or upload a `.lua` file",
         inline=False
     )
     embed.add_field(
@@ -193,36 +246,25 @@ async def help_cmd(interaction: discord.Interaction):
 # /obfuscate
 # ═══════════════════════════════════════
 @bot.tree.command(name="obfuscate", description="Obfuscate your Lua code")
-@app_commands.describe(
-    code="Paste your Lua code here",
-    file="Upload a .lua file"
-)
+@app_commands.describe(file="Upload a .lua file (or use the popup to paste code)")
 async def obfuscate_cmd(
     interaction: discord.Interaction,
-    code: str = None,
     file: discord.Attachment = None
 ):
-    await interaction.response.defer(thinking=True)
-
-    if not code and not file:
-        await interaction.followup.send(
-            embed=discord.Embed(
-                description="❌ Provide `code` or upload a `.lua` file.",
-                color=0xff4444
-            )
-        )
-        return
-
-    if file and not file.filename.endswith(".lua"):
-        await interaction.followup.send(
-            embed=discord.Embed(
-                description="❌ Only `.lua` files are accepted.",
-                color=0xff4444
-            )
-        )
-        return
-
+    # If file is provided, process it directly
     if file:
+        if not file.filename.endswith(".lua"):
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="❌ Only `.lua` files are accepted.",
+                    color=0xff4444
+                ),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(thinking=True)
+
         raw = await file.read()
         try:
             source = raw.decode("utf-8")
@@ -234,51 +276,53 @@ async def obfuscate_cmd(
                 )
             )
             return
+
+        if len(source) > 100000:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description="❌ Code too large. Max 100,000 characters.",
+                    color=0xff4444
+                )
+            )
+            return
+
+        try:
+            result = obfuscator.obfuscate(source)
+        except Exception as ex:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description=f"❌ Obfuscation failed: `{ex}`",
+                    color=0xff4444
+                )
+            )
+            return
+
+        db_increment(interaction.user.id, str(interaction.user))
+
+        out_file = discord.File(
+            fp=io.BytesIO(result.encode("utf-8")),
+            filename="obfuscated.lua"
+        )
+
+        embed = discord.Embed(
+            title="✅ Obfuscation Complete",
+            color=0x57f287
+        )
+        embed.add_field(name="👤 User", value=interaction.user.mention, inline=True)
+        embed.add_field(name="📄 Original", value=f"`{len(source):,}` chars", inline=True)
+        embed.add_field(name="🔒 Protected", value=f"`{len(result):,}` chars", inline=True)
+        embed.add_field(
+            name="🛡️ Protection Layers",
+            value="✓ XOR Encryption\n✓ Virtual Machine\n✓ String Encoding\n✓ Junk Code Injection\n✓ Anti-Tamper",
+            inline=False
+        )
+        embed.set_footer(text="⭐ Star Obfuscator • MoonSec-style Protection")
+
+        await interaction.followup.send(embed=embed, file=out_file)
+
     else:
-        source = code
-
-    if len(source) > 100000:
-        await interaction.followup.send(
-            embed=discord.Embed(
-                description="❌ Code too large. Max 100,000 characters.",
-                color=0xff4444
-            )
-        )
-        return
-
-    try:
-        result = obfuscator.obfuscate(source)
-    except Exception as ex:
-        await interaction.followup.send(
-            embed=discord.Embed(
-                description=f"❌ Obfuscation failed: `{ex}`",
-                color=0xff4444
-            )
-        )
-        return
-
-    db_increment(interaction.user.id, str(interaction.user))
-
-    out_file = discord.File(
-        fp=io.BytesIO(result.encode("utf-8")),
-        filename="obfuscated.lua"
-    )
-
-    embed = discord.Embed(
-        title="✅ Obfuscation Complete",
-        color=0x57f287
-    )
-    embed.add_field(name="👤 User", value=interaction.user.mention, inline=True)
-    embed.add_field(name="📄 Original", value=f"`{len(source):,}` chars", inline=True)
-    embed.add_field(name="🔒 Protected", value=f"`{len(result):,}` chars", inline=True)
-    embed.add_field(
-        name="🛡️ Protection Layers",
-        value="✓ XOR Encryption\n✓ Virtual Machine\n✓ String Encoding\n✓ Junk Code Injection\n✓ Anti-Tamper",
-        inline=False
-    )
-    embed.set_footer(text="⭐ Star Obfuscator • MoonSec-style Protection")
-
-    await interaction.followup.send(embed=embed, file=out_file)
+        # No file — open modal for code input
+        await interaction.response.send_modal(ObfuscateModal())
 
 # ═══════════════════════════════════════
 # /leaderboard
